@@ -5,10 +5,13 @@ class ReplayBuffer(object):
     """
     Replay buffer for training with RNN
     """
+
     def __init__(self, capacity, observation_shape, action_dim):
         self.capacity = capacity
 
-        self.observations = np.zeros((capacity, *observation_shape), dtype=np.uint8)
+        self.vec_observations = np.zeros((capacity, 10), dtype=np.float32)
+        self.img_observations = np.zeros((capacity, 64, 64, 3), dtype=np.float32)
+
         self.actions = np.zeros((capacity, action_dim), dtype=np.float32)
         self.rewards = np.zeros((capacity, 1), dtype=np.float32)
         self.done = np.zeros((capacity, 1), dtype=np.bool_)
@@ -16,12 +19,13 @@ class ReplayBuffer(object):
         self.index = 0
         self.is_filled = False
 
-    def push(self, observation, action, reward, done):
+    def push(self, vec_observation, img_observation, action, reward, done):
         """
         Add experience to replay buffer
         NOTE: observation should be transformed to np.uint8 before push
         """
-        self.observations[self.index] = observation
+        self.vec_observations[self.index] = vec_observation
+        self.img_observations[self.index] = img_observation
         self.actions[self.index] = action
         self.rewards[self.index] = reward
         self.done[self.index] = done
@@ -48,28 +52,30 @@ class ReplayBuffer(object):
                                               episode_borders < final_index).any()
             sampled_indexes += list(range(initial_index, final_index + 1))
 
-        sampled_observations = self.observations[sampled_indexes].reshape(
-            batch_size, chunk_length, *self.observations.shape[1:])
+        sampled_vec_observations = self.vec_observations[sampled_indexes].reshape(
+            batch_size, chunk_length, *self.vec_observations.shape[1:])
+        sampled_img_observations = self.img_observations[sampled_indexes].reshape(
+            batch_size, chunk_length, *self.img_observations.shape[1:])
+
         sampled_actions = self.actions[sampled_indexes].reshape(
             batch_size, chunk_length, self.actions.shape[1])
         sampled_rewards = self.rewards[sampled_indexes].reshape(
             batch_size, chunk_length, 1)
         sampled_done = self.done[sampled_indexes].reshape(
             batch_size, chunk_length, 1)
-        return sampled_observations, sampled_actions, sampled_rewards, sampled_done
+        return sampled_vec_observations, sampled_img_observations, sampled_actions, sampled_rewards, sampled_done
 
     def __len__(self):
         return self.capacity if self.is_filled else self.index
 
-
-def preprocess_obs(obs, bit_depth=5):
-    """
-    Reduces the bit depth of image for the ease of training
-    and convert to [-0.5, 0.5]
-    In addition, add uniform random noise same as original implementation
-    """
-    obs = obs.astype(np.float32)
-    reduced_obs = np.floor(obs / 2 ** (8 - bit_depth))
-    normalized_obs = reduced_obs / 2**bit_depth - 0.5
-    normalized_obs += np.random.uniform(0.0, 1.0 / 2**bit_depth, normalized_obs.shape)
-    return normalized_obs
+# def preprocess_obs(obs, bit_depth=5):
+#     """
+#     Reduces the bit depth of image for the ease of training
+#     and convert to [-0.5, 0.5]
+#     In addition, add uniform random noise same as original implementation
+#     """
+#     obs = obs.astype(np.float32)
+#     reduced_obs = np.floor(obs / 2 ** (8 - bit_depth))
+#     normalized_obs = reduced_obs / 2**bit_depth - 0.5
+#     normalized_obs += np.random.uniform(0.0, 1.0 / 2**bit_depth, normalized_obs.shape)
+#     return normalized_obs

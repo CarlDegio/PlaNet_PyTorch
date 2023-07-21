@@ -1,6 +1,5 @@
 import torch
 from torch.distributions import Normal
-from utils import preprocess_obs
 
 
 class CEMAgent:
@@ -23,14 +22,16 @@ class CEMAgent:
 
     def __call__(self, obs):
         # Preprocess observation and transpose for torch style (channel-first)
-        obs = preprocess_obs(obs)
-        obs = torch.as_tensor(obs, device=self.device)
-        obs = obs.transpose(1, 2).transpose(0, 1).unsqueeze(0)
+        vec_obs=obs['vec']
+        vec_obs=torch.as_tensor(vec_obs,device=self.device).unsqueeze(0)
+        img_obs=obs['img']
+        img_obs=torch.as_tensor(img_obs,device=self.device)
+        img_obs=img_obs.transpose(1,2).transpose(0,1).unsqueeze(0)
 
         with torch.no_grad():
             # Compute starting state for planning
             # while taking information from current observation (posterior)
-            embedded_obs = self.encoder(obs)
+            embedded_obs = self.encoder(vec_obs,img_obs)
             state_posterior = self.rssm.posterior(self.rnn_hidden, embedded_obs)
 
             # Initialize action distribution

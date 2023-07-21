@@ -6,21 +6,39 @@ from torch.distributions import Normal
 
 class Encoder(nn.Module):
     """
-    Encoder to embed image observation (3, 64, 64) to vector (1024,)
+    Encoder to embed image observation (3, 64, 64) to vector (256,)
     """
+
     def __init__(self):
         super(Encoder, self).__init__()
-        self.cv1 = nn.Conv2d(3, 32, kernel_size=4, stride=2)
-        self.cv2 = nn.Conv2d(32, 64, kernel_size=4, stride=2)
-        self.cv3 = nn.Conv2d(64, 128, kernel_size=4, stride=2)
-        self.cv4 = nn.Conv2d(128, 256, kernel_size=4, stride=2)
+        self.cv1 = nn.Conv2d(3, 16, kernel_size=4, stride=2)
+        self.cv2 = nn.Conv2d(16, 16, kernel_size=4, stride=2)
+        self.cv3 = nn.Conv2d(16, 32, kernel_size=4, stride=2)
+        self.cv4 = nn.Conv2d(32, 64, kernel_size=4, stride=2)
+        self.fc1 = nn.Linear(10, 128)
+        self.fc2 = nn.Linear(128, 256)
+        self.fc3 = nn.Linear(512, 256)
 
-    def forward(self, obs):
-        hidden = F.relu(self.cv1(obs))
+    def forward(self, vec, img):
+        hidden = F.relu(self.cv1(img))
         hidden = F.relu(self.cv2(hidden))
         hidden = F.relu(self.cv3(hidden))
-        embedded_obs = F.relu(self.cv4(hidden)).reshape(hidden.size(0), -1)
+        embedded_img_obs = F.relu(self.cv4(hidden)).reshape(hidden.size(0), -1)
+
+        hidden = F.relu(self.fc1(vec))
+        hidden = F.relu(self.fc2(hidden))
+        hidden = torch.cat([hidden, embedded_img_obs], dim=1)
+        embedded_obs = self.fc3(hidden)
         return embedded_obs
+
+    def reset(self):
+        self.cv1.reset_parameters()
+        self.cv2.reset_parameters()
+        self.cv3.reset_parameters()
+        self.cv4.reset_parameters()
+        self.fc1.reset_parameters()
+        self.fc2.reset_parameters()
+        self.fc3.reset_parameters()
 
 
 class RecurrentStateSpaceModel(nn.Module):
@@ -33,6 +51,7 @@ class RecurrentStateSpaceModel(nn.Module):
     min_stddev is added to stddev same as original implementation
     Activation function for this class is F.relu same as original implementation
     """
+
     def __init__(self, state_dim, action_dim, rnn_hidden_dim,
                  hidden_dim=200, min_stddev=0.1, act=F.relu):
         super(RecurrentStateSpaceModel, self).__init__()
@@ -43,7 +62,7 @@ class RecurrentStateSpaceModel(nn.Module):
         self.fc_rnn_hidden = nn.Linear(rnn_hidden_dim, hidden_dim)
         self.fc_state_mean_prior = nn.Linear(hidden_dim, state_dim)
         self.fc_state_stddev_prior = nn.Linear(hidden_dim, state_dim)
-        self.fc_rnn_hidden_embedded_obs = nn.Linear(rnn_hidden_dim + 1024, hidden_dim)
+        self.fc_rnn_hidden_embedded_obs = nn.Linear(rnn_hidden_dim + 256, hidden_dim)
         self.fc_state_mean_posterior = nn.Linear(hidden_dim, state_dim)
         self.fc_state_stddev_posterior = nn.Linear(hidden_dim, state_dim)
         self.rnn = nn.GRUCell(hidden_dim, rnn_hidden_dim)
@@ -83,6 +102,16 @@ class RecurrentStateSpaceModel(nn.Module):
         stddev = F.softplus(self.fc_state_stddev_posterior(hidden)) + self._min_stddev
         return Normal(mean, stddev)
 
+    def reset(self):
+        self.fc_state_action.reset_parameters()
+        self.fc_rnn_hidden.reset_parameters()
+        self.fc_state_mean_prior.reset_parameters()
+        self.fc_state_stddev_prior.reset_parameters()
+        self.fc_rnn_hidden_embedded_obs.reset_parameters()
+        self.fc_state_mean_posterior.reset_parameters()
+        self.fc_state_stddev_posterior.reset_parameters()
+        self.rnn.reset_parameters()
+
 
 class ObservationModel(nn.Module):
     """
@@ -90,29 +119,47 @@ class ObservationModel(nn.Module):
     Observation model to reconstruct image observation (3, 64, 64)
     from state and rnn hidden state
     """
+
     def __init__(self, state_dim, rnn_hidden_dim):
         super(ObservationModel, self).__init__()
-        self.fc = nn.Linear(state_dim + rnn_hidden_dim, 1024)
-        self.dc1 = nn.ConvTranspose2d(1024, 128, kernel_size=5, stride=2)
-        self.dc2 = nn.ConvTranspose2d(128, 64, kernel_size=5, stride=2)
-        self.dc3 = nn.ConvTranspose2d(64, 32, kernel_size=6, stride=2)
-        self.dc4 = nn.ConvTranspose2d(32, 3, kernel_size=6, stride=2)
+        self.fc = nn.Linear(state_dim + rnn_hidden_dim, 256)
+        self.fc1 = nn.Linear(256, 64)
+        self.fc2 = nn.Linear(64, 32)
+        self.fc3 = nn.Linear(32, 10)
+        self.dc1 = nn.ConvTranspose2d(256, 128, kernel_size=5, stride=2)
+        self.dc2 = nn.ConvTranspose2d(128, 32, kernel_size=5, stride=2)
+        self.dc3 = nn.ConvTranspose2d(32, 16, kernel_size=6, stride=2)
+        self.dc4 = nn.ConvTranspose2d(16, 3, kernel_size=6, stride=2)
 
     def forward(self, state, rnn_hidden):
         hidden = self.fc(torch.cat([state, rnn_hidden], dim=1))
-        hidden = hidden.view(hidden.size(0), 1024, 1, 1)
+        vec_hidden = F.relu(self.fc1(hidden))
+        vec_hidden = F.relu(self.fc2(vec_hidden))
+        vec = self.fc3(vec_hidden)
+
+        hidden = hidden.view(hidden.size(0), 256, 1, 1)
         hidden = F.relu(self.dc1(hidden))
         hidden = F.relu(self.dc2(hidden))
         hidden = F.relu(self.dc3(hidden))
-        obs = self.dc4(hidden)
-        return obs
+        img = self.dc4(hidden)
+        return vec, img
 
+    def reset(self):
+        self.fc.reset_parameters()
+        self.fc1.reset_parameters()
+        self.fc2.reset_parameters()
+        self.fc3.reset_parameters()
+        self.dc1.reset_parameters()
+        self.dc2.reset_parameters()
+        self.dc3.reset_parameters()
+        self.dc4.reset_parameters()
 
 class RewardModel(nn.Module):
     """
     p(r_t | s_t, h_t)
     Reward model to predict reward from state and rnn hidden state
     """
+
     def __init__(self, state_dim, rnn_hidden_dim, hidden_dim=300, act=F.relu):
         super(RewardModel, self).__init__()
         self.fc1 = nn.Linear(state_dim + rnn_hidden_dim, hidden_dim)
@@ -127,3 +174,9 @@ class RewardModel(nn.Module):
         hidden = self.act(self.fc3(hidden))
         reward = self.fc4(hidden)
         return reward
+
+    def reset(self):
+        self.fc1.reset_parameters()
+        self.fc2.reset_parameters()
+        self.fc3.reset_parameters()
+        self.fc4.reset_parameters()

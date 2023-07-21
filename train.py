@@ -4,18 +4,19 @@ import json
 import os
 from pprint import pprint
 import time
+
+import gym
 import numpy as np
 import torch
+from Envs.normalize_wrapper import NormalizeWrapper
 from torch.distributions.kl import kl_divergence
 from torch.nn.functional import mse_loss
 from torch.nn.utils import clip_grad_norm_
 from torch.optim import Adam
 from torch.utils.tensorboard import SummaryWriter
-from dm_control import suite
-from dm_control.suite.wrappers import pixels
 from agent import CEMAgent
 from model import Encoder, RecurrentStateSpaceModel, ObservationModel, RewardModel
-from utils import ReplayBuffer, preprocess_obs
+from utils import ReplayBuffer
 from wrappers import GymWrapper, RepeatAction
 
 
@@ -24,17 +25,17 @@ def main():
     parser.add_argument('--seed', type=int, default=0)
     parser.add_argument('--log-dir', type=str, default='log')
     parser.add_argument('--test-interval', type=int, default=10)
-    parser.add_argument('--domain-name', type=str, default='cheetah')
+    parser.add_argument('--domain-name', type=str, default='tactile_push')
     parser.add_argument('--task-name', type=str, default='run')
-    parser.add_argument('-R', '--action-repeat', type=int, default=4)
+    parser.add_argument('-R', '--action-repeat', type=int, default=2)
     parser.add_argument('--state-dim', type=int, default=30)
     parser.add_argument('--rnn-hidden-dim', type=int, default=200)
-    parser.add_argument('--buffer-capacity', type=int, default=1000000)
-    parser.add_argument('--all-episodes', type=int, default=1000)
-    parser.add_argument('-S', '--seed-episodes', type=int, default=5)
+    parser.add_argument('--buffer-capacity', type=int, default=100000)
+    parser.add_argument('--all-episodes', type=int, default=500)
+    parser.add_argument('-S', '--seed-episodes', type=int, default=200)
     parser.add_argument('-C', '--collect-interval', type=int, default=100)
     parser.add_argument('-B', '--batch-size', type=int, default=50)
-    parser.add_argument('-L', '--chunk-length', type=int, default=50)
+    parser.add_argument('-L', '--chunk-length', type=int, default=20)
     parser.add_argument('--lr', type=float, default=1e-3)
     parser.add_argument('--eps', type=float, default=1e-4)
     parser.add_argument('--clip-grad-norm', type=int, default=1000)
@@ -44,6 +45,7 @@ def main():
     parser.add_argument('-J', '--N-candidates', type=int, default=1000)
     parser.add_argument('-K', '--N-top-candidates', type=int, default=100)
     parser.add_argument('--action-noise-var', type=float, default=0.3)
+    parser.add_argument('--reset-interval', type=int, default=100)
     args = parser.parse_args()
 
     # Prepare logging
@@ -62,11 +64,9 @@ def main():
         torch.cuda.manual_seed(args.seed)
 
     # define env and apply wrappers
-    env = suite.load(args.domain_name, args.task_name, task_kwargs={'random': args.seed})
-    env = pixels.Wrapper(env, render_kwargs={'height': 64,
-                                             'width': 64,
-                                             'camera_id': 0})
-    env = GymWrapper(env)
+    env = gym.make("tactile_push/PushBall-v1", dense_reward=True, render_mode="none", seed=1)
+    env = NormalizeWrapper(env)
+
     env = RepeatAction(env, skip=args.action_repeat)
 
     # define replay buffer
@@ -95,7 +95,7 @@ def main():
         while not done:
             action = env.action_space.sample()
             next_obs, reward, done, _ = env.step(action)
-            replay_buffer.push(obs, action, reward, done)
+            replay_buffer.push(obs['vec'], obs['img'], action, reward, done)
             obs = next_obs
 
     # main training loop
@@ -114,32 +114,32 @@ def main():
             action += np.random.normal(0, np.sqrt(args.action_noise_var),
                                        env.action_space.shape[0])
             next_obs, reward, done, _ = env.step(action)
-            replay_buffer.push(obs, action, reward, done)
+            replay_buffer.push(obs['vec'], obs['img'], action, reward, done)
             obs = next_obs
             total_reward += reward
 
         writer.add_scalar('total reward at train', total_reward, episode)
         print('episode [%4d/%4d] is collected. Total reward is %f' %
-              (episode+1, args.all_episodes, total_reward))
+              (episode + 1, args.all_episodes, total_reward))
         print('elasped time for interaction: %.2fs' % (time.time() - start))
 
         # update model parameters
         start = time.time()
         for update_step in range(args.collect_interval):
-            observations, actions, rewards, _ = \
+            vec_observations, img_observations, actions, rewards, _ = \
                 replay_buffer.sample(args.batch_size, args.chunk_length)
 
             # preprocess observations and transpose tensor for RNN training
-            observations = preprocess_obs(observations)
-            observations = torch.as_tensor(observations, device=device)
-            observations = observations.transpose(3, 4).transpose(2, 3)
-            observations = observations.transpose(0, 1)
+            vec_observations = torch.as_tensor(vec_observations, device=device).transpose(0, 1)
+            img_observations = torch.as_tensor(img_observations, device=device)
+            img_observations = img_observations.transpose(3, 4).transpose(2, 3)
+            img_observations = img_observations.transpose(0, 1)
             actions = torch.as_tensor(actions, device=device).transpose(0, 1)
             rewards = torch.as_tensor(rewards, device=device).transpose(0, 1)
 
             # embed observations with CNN
-            embedded_observations = encoder(
-                observations.reshape(-1, 3, 64, 64)).view(args.chunk_length, args.batch_size, -1)
+            embedded_observations = encoder(vec_observations.reshape(-1, 10), img_observations.reshape(-1, 3, 64, 64)) \
+                .view(args.chunk_length, args.batch_size, -1)
 
             # prepare Tensor to maintain states sequence and rnn hidden states sequence
             states = torch.zeros(
@@ -153,12 +153,12 @@ def main():
 
             # compute state and rnn hidden sequences and kl loss
             kl_loss = 0
-            for l in range(args.chunk_length-1):
+            for l in range(args.chunk_length - 1):
                 next_state_prior, next_state_posterior, rnn_hidden = \
-                    rssm(state, actions[l], rnn_hidden, embedded_observations[l+1])
+                    rssm(state, actions[l], rnn_hidden, embedded_observations[l + 1])
                 state = next_state_posterior.rsample()
-                states[l+1] = state
-                rnn_hiddens[l+1] = rnn_hidden
+                states[l + 1] = state
+                rnn_hiddens[l + 1] = rnn_hidden
                 kl = kl_divergence(next_state_prior, next_state_posterior).sum(dim=1)
                 kl_loss += kl.clamp(min=args.free_nats).mean()
             kl_loss /= (args.chunk_length - 1)
@@ -166,14 +166,17 @@ def main():
             # compute reconstructed observations and predicted rewards
             flatten_states = states.view(-1, args.state_dim)
             flatten_rnn_hiddens = rnn_hiddens.view(-1, args.rnn_hidden_dim)
-            recon_observations = obs_model(flatten_states, flatten_rnn_hiddens).view(
-                args.chunk_length, args.batch_size, 3, 64, 64)
+            vec_recon_observations, img_recon_observations = obs_model(flatten_states, flatten_rnn_hiddens)
+            vec_recon_observations = vec_recon_observations.view(args.chunk_length, args.batch_size, 10)
+            img_recon_observations = img_recon_observations.view(args.chunk_length, args.batch_size, 3, 64, 64)
             predicted_rewards = reward_model(flatten_states, flatten_rnn_hiddens).view(
                 args.chunk_length, args.batch_size, 1)
 
             # compute loss for observation and reward
             obs_loss = 0.5 * mse_loss(
-                recon_observations[1:], observations[1:], reduction='none').mean([0, 1]).sum()
+                img_recon_observations[1:], img_observations[1:], reduction='none').mean([0, 1]).sum()
+            obs_loss += 0.5 * 100 * mse_loss(
+                vec_recon_observations[1:], vec_observations[1:], reduction='none').mean([0, 1]).sum()
             reward_loss = 0.5 * mse_loss(predicted_rewards[1:], rewards[:-1])
 
             # add all losses and update model parameters with gradient descent
@@ -185,7 +188,7 @@ def main():
 
             # print losses and add tensorboard
             print('update_step: %3d loss: %.5f, kl_loss: %.5f, obs_loss: %.5f, reward_loss: % .5f'
-                  % (update_step+1,
+                  % (update_step + 1,
                      loss.item(), kl_loss.item(), obs_loss.item(), reward_loss.item()))
             total_update_step = episode * args.collect_interval + update_step
             writer.add_scalar('overall loss', loss.item(), total_update_step)
@@ -211,8 +214,14 @@ def main():
 
             writer.add_scalar('total reward at test', total_reward, episode)
             print('Total test reward at episode [%4d/%4d] is %f' %
-                  (episode+1, args.all_episodes, total_reward))
+                  (episode + 1, args.all_episodes, total_reward))
             print('elasped time for test: %.2fs' % (time.time() - start))
+
+        if (episode + 1) % args.reset_interval == 0:
+            encoder.reset()
+            rssm.reset()
+            obs_model.reset()
+            reward_model.reset()
 
     # save learned model parameters
     torch.save(encoder.state_dict(), os.path.join(log_dir, 'encoder.pth'))
@@ -220,6 +229,7 @@ def main():
     torch.save(obs_model.state_dict(), os.path.join(log_dir, 'obs_model.pth'))
     torch.save(reward_model.state_dict(), os.path.join(log_dir, 'reward_model.pth'))
     writer.close()
+
 
 if __name__ == '__main__':
     main()
