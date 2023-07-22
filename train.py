@@ -30,13 +30,13 @@ def main():
     parser.add_argument('-R', '--action-repeat', type=int, default=2)
     parser.add_argument('--state-dim', type=int, default=30)
     parser.add_argument('--rnn-hidden-dim', type=int, default=200)
-    parser.add_argument('--buffer-capacity', type=int, default=100000)
-    parser.add_argument('--all-episodes', type=int, default=500)
+    parser.add_argument('--buffer-capacity', type=int, default=200000)
+    parser.add_argument('--all-episodes', type=int, default=2000)
     parser.add_argument('-S', '--seed-episodes', type=int, default=200)
-    parser.add_argument('-C', '--collect-interval', type=int, default=100)
+    parser.add_argument('-C', '--collect-interval', type=int, default=30)
     parser.add_argument('-B', '--batch-size', type=int, default=50)
     parser.add_argument('-L', '--chunk-length', type=int, default=20)
-    parser.add_argument('--lr', type=float, default=1e-3)
+    parser.add_argument('--lr', type=float, default=1e-4)
     parser.add_argument('--eps', type=float, default=1e-4)
     parser.add_argument('--clip-grad-norm', type=int, default=1000)
     parser.add_argument('--free-nats', type=int, default=3)
@@ -45,7 +45,7 @@ def main():
     parser.add_argument('-J', '--N-candidates', type=int, default=1000)
     parser.add_argument('-K', '--N-top-candidates', type=int, default=100)
     parser.add_argument('--action-noise-var', type=float, default=0.3)
-    parser.add_argument('--reset-interval', type=int, default=100)
+    parser.add_argument('--reset-interval', type=int, default=10000)
     args = parser.parse_args()
 
     # Prepare logging
@@ -173,10 +173,11 @@ def main():
                 args.chunk_length, args.batch_size, 1)
 
             # compute loss for observation and reward
-            obs_loss = 0.5 * mse_loss(
+            img_obs_loss = 0.5 * mse_loss(
                 img_recon_observations[1:], img_observations[1:], reduction='none').mean([0, 1]).sum()
-            obs_loss += 0.5 * 100 * mse_loss(
+            vec_obs_loss = 0.5 * 100 * mse_loss(
                 vec_recon_observations[1:], vec_observations[1:], reduction='none').mean([0, 1]).sum()
+            obs_loss = img_obs_loss + vec_obs_loss
             reward_loss = 0.5 * mse_loss(predicted_rewards[1:], rewards[:-1])
 
             # add all losses and update model parameters with gradient descent
@@ -194,6 +195,8 @@ def main():
             writer.add_scalar('overall loss', loss.item(), total_update_step)
             writer.add_scalar('kl loss', kl_loss.item(), total_update_step)
             writer.add_scalar('obs loss', obs_loss.item(), total_update_step)
+            writer.add_scalar('img obs loss', img_obs_loss.item(), total_update_step)
+            writer.add_scalar('vec obs loss', vec_obs_loss.item(), total_update_step)
             writer.add_scalar('reward loss', reward_loss.item(), total_update_step)
 
         print('elasped time for update: %.2fs' % (time.time() - start))
