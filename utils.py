@@ -68,6 +68,24 @@ class ReplayBuffer(object):
     def __len__(self):
         return self.capacity if self.is_filled else self.index
 
+    def save(self,dir='log/tactile_push_run'):
+        np.savez_compressed(dir + '/replay_buffer.npz',
+                            vec_observations=self.vec_observations,
+                            img_observations=self.img_observations,
+                            actions=self.actions,
+                            rewards=self.rewards,
+                            done=self.done,
+                            index=self.index)
+
+    def load(self,dir='log/tactile_push_run'):
+        data = np.load(dir + '/replay_buffer.npz')
+        self.vec_observations = data['vec_observations']
+        self.img_observations = data['img_observations']
+        self.actions = data['actions']
+        self.rewards = data['rewards']
+        self.done = data['done']
+        self.index = data['index']
+
 # def preprocess_obs(obs, bit_depth=5):
 #     """
 #     Reduces the bit depth of image for the ease of training

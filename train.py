@@ -30,10 +30,10 @@ def main():
     parser.add_argument('-R', '--action-repeat', type=int, default=2)
     parser.add_argument('--state-dim', type=int, default=30)
     parser.add_argument('--rnn-hidden-dim', type=int, default=200)
-    parser.add_argument('--buffer-capacity', type=int, default=200000)
-    parser.add_argument('--all-episodes', type=int, default=2000)
+    parser.add_argument('--buffer-capacity', type=int, default=100000)
+    parser.add_argument('--all-episodes', type=int, default=1000)
     parser.add_argument('-S', '--seed-episodes', type=int, default=200)
-    parser.add_argument('-C', '--collect-interval', type=int, default=30)
+    parser.add_argument('-C', '--collect-interval', type=int, default=50)
     parser.add_argument('-B', '--batch-size', type=int, default=50)
     parser.add_argument('-L', '--chunk-length', type=int, default=20)
     parser.add_argument('--lr', type=float, default=1e-4)
@@ -44,7 +44,7 @@ def main():
     parser.add_argument('-I', '--N-iterations', type=int, default=10)
     parser.add_argument('-J', '--N-candidates', type=int, default=1000)
     parser.add_argument('-K', '--N-top-candidates', type=int, default=100)
-    parser.add_argument('--action-noise-var', type=float, default=0.3)
+    parser.add_argument('--action-noise-var', type=float, default=0.01)
     parser.add_argument('--reset-interval', type=int, default=10000)
     args = parser.parse_args()
 
@@ -73,6 +73,7 @@ def main():
     replay_buffer = ReplayBuffer(capacity=args.buffer_capacity,
                                  observation_shape=env.observation_space.shape,
                                  action_dim=env.action_space.shape[0])
+    # replay_buffer.load()
 
     # define models and optimizer
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -82,6 +83,11 @@ def main():
                                     args.rnn_hidden_dim).to(device)
     obs_model = ObservationModel(args.state_dim, args.rnn_hidden_dim).to(device)
     reward_model = RewardModel(args.state_dim, args.rnn_hidden_dim).to(device)
+    # encoder.load_state_dict(torch.load(os.path.join('log/tactile_push_run/200collect1000episode_midvar', 'encoder.pth')))
+    # rssm.load_state_dict(torch.load(os.path.join('log/tactile_push_run/200collect1000episode_midvar', 'rssm.pth')))
+    # obs_model.load_state_dict(torch.load(os.path.join('log/tactile_push_run/200collect1000episode_midvar', 'obs_model.pth')))
+    # reward_model.load_state_dict(torch.load(os.path.join('log/tactile_push_run/200collect1000episode_midvar', 'reward_model.pth')))
+
     all_params = (list(encoder.parameters()) +
                   list(rssm.parameters()) +
                   list(obs_model.parameters()) +
@@ -178,7 +184,7 @@ def main():
             vec_obs_loss = 0.5 * 100 * mse_loss(
                 vec_recon_observations[1:], vec_observations[1:], reduction='none').mean([0, 1]).sum()
             obs_loss = img_obs_loss + vec_obs_loss
-            reward_loss = 0.5 * mse_loss(predicted_rewards[1:], rewards[:-1])
+            reward_loss = 0.5*10 * mse_loss(predicted_rewards[1:], rewards[:-1])
 
             # add all losses and update model parameters with gradient descent
             loss = kl_loss + obs_loss + reward_loss
@@ -204,16 +210,18 @@ def main():
         # test to get score without exploration noise
         if (episode + 1) % args.test_interval == 0:
             start = time.time()
-            cem_agent = CEMAgent(encoder, rssm, reward_model,
-                                 args.horizon, args.N_iterations,
-                                 args.N_candidates, args.N_top_candidates)
-            obs = env.reset()
-            done = False
             total_reward = 0
-            while not done:
-                action = cem_agent(obs)
-                obs, reward, done, _ = env.step(action)
-                total_reward += reward
+            for i in range(5):
+                cem_agent = CEMAgent(encoder, rssm, reward_model,
+                                     args.horizon, args.N_iterations,
+                                     args.N_candidates, args.N_top_candidates)
+                obs = env.reset()
+                done = False
+                while not done:
+                    action = cem_agent(obs)
+                    obs, reward, done, _ = env.step(action)
+                    total_reward += reward
+            total_reward /= 5
 
             writer.add_scalar('total reward at test', total_reward, episode)
             print('Total test reward at episode [%4d/%4d] is %f' %
@@ -231,6 +239,7 @@ def main():
     torch.save(rssm.state_dict(), os.path.join(log_dir, 'rssm.pth'))
     torch.save(obs_model.state_dict(), os.path.join(log_dir, 'obs_model.pth'))
     torch.save(reward_model.state_dict(), os.path.join(log_dir, 'reward_model.pth'))
+    replay_buffer.save()
     writer.close()
 
 
