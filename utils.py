@@ -78,6 +78,7 @@ class ReplayBuffer(object):
                             index=self.index)
 
     def load(self,dir='log/tactile_push_run'):
+        print("loading replay buffer...")
         data = np.load(dir + '/replay_buffer.npz')
         self.vec_observations = data['vec_observations']
         self.img_observations = data['img_observations']
@@ -85,6 +86,7 @@ class ReplayBuffer(object):
         self.rewards = data['rewards']
         self.done = data['done']
         self.index = data['index']
+        print("loading replay buffer finish with index : ", self.index)
 
 # def preprocess_obs(obs, bit_depth=5):
 #     """

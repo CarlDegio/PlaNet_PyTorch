@@ -32,7 +32,7 @@ def main():
     parser.add_argument('--rnn-hidden-dim', type=int, default=200)
     parser.add_argument('--buffer-capacity', type=int, default=100000)
     parser.add_argument('--all-episodes', type=int, default=1000)
-    parser.add_argument('-S', '--seed-episodes', type=int, default=200)
+    parser.add_argument('-S', '--seed-episodes', type=int, default=100)
     parser.add_argument('-C', '--collect-interval', type=int, default=50)
     parser.add_argument('-B', '--batch-size', type=int, default=50)
     parser.add_argument('-L', '--chunk-length', type=int, default=20)
@@ -41,9 +41,9 @@ def main():
     parser.add_argument('--clip-grad-norm', type=int, default=1000)
     parser.add_argument('--free-nats', type=int, default=3)
     parser.add_argument('-H', '--horizon', type=int, default=12)
-    parser.add_argument('-I', '--N-iterations', type=int, default=10)
+    parser.add_argument('-I', '--N-iterations', type=int, default=20)
     parser.add_argument('-J', '--N-candidates', type=int, default=1000)
-    parser.add_argument('-K', '--N-top-candidates', type=int, default=100)
+    parser.add_argument('-K', '--N-top-candidates', type=int, default=20)
     parser.add_argument('--action-noise-var', type=float, default=0.01)
     parser.add_argument('--reset-interval', type=int, default=10000)
     args = parser.parse_args()
@@ -83,10 +83,10 @@ def main():
                                     args.rnn_hidden_dim).to(device)
     obs_model = ObservationModel(args.state_dim, args.rnn_hidden_dim).to(device)
     reward_model = RewardModel(args.state_dim, args.rnn_hidden_dim).to(device)
-    # encoder.load_state_dict(torch.load(os.path.join('log/tactile_push_run/200collect1000episode_midvar', 'encoder.pth')))
-    # rssm.load_state_dict(torch.load(os.path.join('log/tactile_push_run/200collect1000episode_midvar', 'rssm.pth')))
-    # obs_model.load_state_dict(torch.load(os.path.join('log/tactile_push_run/200collect1000episode_midvar', 'obs_model.pth')))
-    # reward_model.load_state_dict(torch.load(os.path.join('log/tactile_push_run/200collect1000episode_midvar', 'reward_model.pth')))
+    # encoder.load_state_dict(torch.load(os.path.join('log/tactile_push_run/5collect1000episode_dataset', 'encoder.pth')))
+    # rssm.load_state_dict(torch.load(os.path.join('log/tactile_push_run/5collect1000episode_dataset', 'rssm.pth')))
+    # obs_model.load_state_dict(torch.load(os.path.join('log/tactile_push_run/5collect1000episode_dataset', 'obs_model.pth')))
+    # reward_model.load_state_dict(torch.load(os.path.join('log/tactile_push_run/5collect1000episode_dataset', 'reward_model.pth')))
 
     all_params = (list(encoder.parameters()) +
                   list(rssm.parameters()) +
@@ -94,43 +94,7 @@ def main():
                   list(reward_model.parameters()))
     optimizer = Adam(all_params, lr=args.lr, eps=args.eps)
 
-    # collect initial experience with random action
-    for episode in range(args.seed_episodes):
-        obs = env.reset()
-        done = False
-        while not done:
-            action = env.action_space.sample()
-            next_obs, reward, done, _ = env.step(action)
-            replay_buffer.push(obs['vec'], obs['img'], action, reward, done)
-            obs = next_obs
-
-    # main training loop
-    for episode in range(args.seed_episodes, args.all_episodes):
-        # collect experiences
-        start = time.time()
-        cem_agent = CEMAgent(encoder, rssm, reward_model,
-                             args.horizon, args.N_iterations,
-                             args.N_candidates, args.N_top_candidates)
-
-        obs = env.reset()
-        done = False
-        total_reward = 0
-        while not done:
-            action = cem_agent(obs)
-            action += np.random.normal(0, np.sqrt(args.action_noise_var),
-                                       env.action_space.shape[0])
-            next_obs, reward, done, _ = env.step(action)
-            replay_buffer.push(obs['vec'], obs['img'], action, reward, done)
-            obs = next_obs
-            total_reward += reward
-
-        writer.add_scalar('total reward at train', total_reward, episode)
-        print('episode [%4d/%4d] is collected. Total reward is %f' %
-              (episode + 1, args.all_episodes, total_reward))
-        print('elasped time for interaction: %.2fs' % (time.time() - start))
-
-        # update model parameters
-        start = time.time()
+    def train_epoch():
         for update_step in range(args.collect_interval):
             vec_observations, img_observations, actions, rewards, _ = \
                 replay_buffer.sample(args.batch_size, args.chunk_length)
@@ -184,7 +148,7 @@ def main():
             vec_obs_loss = 0.5 * 100 * mse_loss(
                 vec_recon_observations[1:], vec_observations[1:], reduction='none').mean([0, 1]).sum()
             obs_loss = img_obs_loss + vec_obs_loss
-            reward_loss = 0.5*10 * mse_loss(predicted_rewards[1:], rewards[:-1])
+            reward_loss = 0.5 * 10 * mse_loss(predicted_rewards[1:], rewards[:-1])
 
             # add all losses and update model parameters with gradient descent
             loss = kl_loss + obs_loss + reward_loss
@@ -204,6 +168,53 @@ def main():
             writer.add_scalar('img obs loss', img_obs_loss.item(), total_update_step)
             writer.add_scalar('vec obs loss', vec_obs_loss.item(), total_update_step)
             writer.add_scalar('reward loss', reward_loss.item(), total_update_step)
+
+    # collect initial experience with random action
+    for episode in range(args.seed_episodes):
+        obs = env.reset()
+        done = False
+        while not done:
+            action = env.action_space.sample()
+            next_obs, reward, done, _ = env.step(action)
+            replay_buffer.push(obs['vec'], obs['img'], action, reward, done)
+            obs = next_obs
+
+    #train load buffer and seed episodes
+    for epoch in range(0):
+        print("pretraining epoch: ", epoch)
+        train_epoch()
+
+    # main training loop
+    for episode in range(args.seed_episodes, args.all_episodes):
+        # collect experiences
+        start = time.time()
+        cem_agent = CEMAgent(encoder, rssm, reward_model,
+                             args.horizon, args.N_iterations,
+                             args.N_candidates, args.N_top_candidates)
+
+        obs = env.reset()
+        done = False
+        total_reward = 0
+        while not done:
+            action = cem_agent(obs)
+            action += np.random.normal(0, np.sqrt(args.action_noise_var),
+                                       env.action_space.shape[0])
+            next_obs, reward, done, _ = env.step(action)
+            replay_buffer.push(obs['vec'], obs['img'], action, reward, done)
+            obs = next_obs
+            total_reward += reward
+
+        writer.add_scalar('total reward at train', total_reward, episode)
+        print('episode [%4d/%4d] is collected. Total reward is %f' %
+              (episode + 1, args.all_episodes, total_reward))
+        print('elasped time for interaction: %.2fs' % (time.time() - start))
+
+        # update model parameters
+
+
+        start = time.time()
+
+        train_epoch()
 
         print('elasped time for update: %.2fs' % (time.time() - start))
 
@@ -239,7 +250,7 @@ def main():
     torch.save(rssm.state_dict(), os.path.join(log_dir, 'rssm.pth'))
     torch.save(obs_model.state_dict(), os.path.join(log_dir, 'obs_model.pth'))
     torch.save(reward_model.state_dict(), os.path.join(log_dir, 'reward_model.pth'))
-    replay_buffer.save()
+    # replay_buffer.save()
     writer.close()
 
 
