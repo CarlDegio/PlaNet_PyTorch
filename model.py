@@ -63,6 +63,7 @@ class RecurrentStateSpaceModel(nn.Module):
         self.fc_state_mean_prior = nn.Linear(hidden_dim, state_dim)
         self.fc_state_stddev_prior = nn.Linear(hidden_dim, state_dim)
         self.fc_rnn_hidden_embedded_obs = nn.Linear(rnn_hidden_dim + 256, hidden_dim)
+        self.fc_posterior_fc = nn.Linear(hidden_dim, hidden_dim)
         self.fc_state_mean_posterior = nn.Linear(hidden_dim, state_dim)
         self.fc_state_stddev_posterior = nn.Linear(hidden_dim, state_dim)
         self.rnn = nn.GRUCell(hidden_dim, rnn_hidden_dim)
@@ -98,6 +99,7 @@ class RecurrentStateSpaceModel(nn.Module):
         """
         hidden = self.act(self.fc_rnn_hidden_embedded_obs(
             torch.cat([rnn_hidden, embedded_obs], dim=1)))
+        hidden = self.act(self.fc_posterior_fc(hidden))
         mean = self.fc_state_mean_posterior(hidden)
         stddev = F.softplus(self.fc_state_stddev_posterior(hidden)) + self._min_stddev
         return Normal(mean, stddev)
@@ -108,6 +110,7 @@ class RecurrentStateSpaceModel(nn.Module):
         self.fc_state_mean_prior.reset_parameters()
         self.fc_state_stddev_prior.reset_parameters()
         self.fc_rnn_hidden_embedded_obs.reset_parameters()
+        self.fc_posterior_fc.reset_parameters()
         self.fc_state_mean_posterior.reset_parameters()
         self.fc_state_stddev_posterior.reset_parameters()
         self.rnn.reset_parameters()

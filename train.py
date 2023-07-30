@@ -32,14 +32,14 @@ def main():
     parser.add_argument('--rnn-hidden-dim', type=int, default=200)
     parser.add_argument('--buffer-capacity', type=int, default=100000)
     parser.add_argument('--all-episodes', type=int, default=1000)
-    parser.add_argument('-S', '--seed-episodes', type=int, default=100)
+    parser.add_argument('-S', '--seed-episodes', type=int, default=5)
     parser.add_argument('-C', '--collect-interval', type=int, default=50)
     parser.add_argument('-B', '--batch-size', type=int, default=50)
     parser.add_argument('-L', '--chunk-length', type=int, default=20)
     parser.add_argument('--lr', type=float, default=1e-4)
     parser.add_argument('--eps', type=float, default=1e-4)
     parser.add_argument('--clip-grad-norm', type=int, default=1000)
-    parser.add_argument('--free-nats', type=int, default=3)
+    parser.add_argument('--free-nats', type=int, default=0.8)
     parser.add_argument('-H', '--horizon', type=int, default=12)
     parser.add_argument('-I', '--N-iterations', type=int, default=20)
     parser.add_argument('-J', '--N-candidates', type=int, default=1000)
@@ -143,9 +143,9 @@ def main():
                 args.chunk_length, args.batch_size, 1)
 
             # compute loss for observation and reward
-            img_obs_loss = 0.5 * mse_loss(
+            img_obs_loss = 0.5 * 0.1 * mse_loss(
                 img_recon_observations[1:], img_observations[1:], reduction='none').mean([0, 1]).sum()
-            vec_obs_loss = 0.5 * 100 * mse_loss(
+            vec_obs_loss = 0.5 * 10 * mse_loss(
                 vec_recon_observations[1:], vec_observations[1:], reduction='none').mean([0, 1]).sum()
             obs_loss = img_obs_loss + vec_obs_loss
             reward_loss = 0.5 * 10 * mse_loss(predicted_rewards[1:], rewards[:-1])
@@ -250,7 +250,7 @@ def main():
     torch.save(rssm.state_dict(), os.path.join(log_dir, 'rssm.pth'))
     torch.save(obs_model.state_dict(), os.path.join(log_dir, 'obs_model.pth'))
     torch.save(reward_model.state_dict(), os.path.join(log_dir, 'reward_model.pth'))
-    # replay_buffer.save()
+    replay_buffer.save()
     writer.close()
 
 
