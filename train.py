@@ -24,7 +24,7 @@ def main():
     parser = argparse.ArgumentParser(description='PlaNet for DM control')
     parser.add_argument('--seed', type=int, default=0)
     parser.add_argument('--log-dir', type=str, default='log')
-    parser.add_argument('--test-interval', type=int, default=10)
+    parser.add_argument('--test-interval', type=int, default=20)
     parser.add_argument('--domain-name', type=str, default='tactile_push')
     parser.add_argument('--task-name', type=str, default='run')
     parser.add_argument('-R', '--action-repeat', type=int, default=2)
@@ -126,10 +126,16 @@ def main():
             for l in range(args.chunk_length - 1):
                 next_state_prior, next_state_posterior, rnn_hidden = \
                     rssm(state, actions[l], rnn_hidden, embedded_observations[l + 1])
+                # with torch.no_grad():
+                #     next_state_prior_sg, next_state_posterior_sg, rnn_hidden_sg = \
+                #         rssm(state, actions[l], rnn_hidden, embedded_observations[l + 1])
                 state = next_state_posterior.rsample()
                 states[l + 1] = state
                 rnn_hiddens[l + 1] = rnn_hidden
                 kl = kl_divergence(next_state_prior, next_state_posterior).sum(dim=1)
+                # kl = 0.8 * kl_divergence(next_state_posterior_sg, next_state_prior).sum(dim=1) + \
+                #      0.2 * kl_divergence(next_state_posterior, next_state_prior_sg).sum(dim=1)
+
                 kl_loss += kl.clamp(min=args.free_nats).mean()
             kl_loss /= (args.chunk_length - 1)
 
