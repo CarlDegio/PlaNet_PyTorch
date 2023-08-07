@@ -6,11 +6,12 @@ class CEMAgent:
     """
     Action planning by Cross Entropy Method (CEM) in learned RSSM Model
     """
-    def __init__(self, encoder, rssm, reward_model,
+    def __init__(self, encoder, rssm, reward_model, obs_model,
                  horizon, N_iterations, N_candidates, N_top_candidates):
         self.encoder = encoder
         self.rssm = rssm
         self.reward_model = reward_model
+        self.obs_model = obs_model
 
         self.horizon = horizon
         self.N_iterations = N_iterations
@@ -53,7 +54,7 @@ class CEMAgent:
                 # These are for parallel exploration
                 total_predicted_reward = torch.zeros(self.N_candidates, device=self.device)
                 state = state_posterior.sample([self.N_candidates]).squeeze()
-                rnn_hidden = self.rnn_hidden.repeat([self.N_candidates, 1])
+                rnn_hidden = self.rnn_hidden.repeat([self.N_candidates, 1])  # 当前步的state和当前步的的RNN
 
                 # Compute total predicted reward by open-loop prediction using prior
                 for t in range(self.horizon):
@@ -61,6 +62,8 @@ class CEMAgent:
                         self.rssm.prior(state, action_candidates[t], rnn_hidden)
                     state = next_state_prior.sample()
                     total_predicted_reward += self.reward_model(state, rnn_hidden).squeeze()
+                    # if t<5:
+                    #     total_predicted_reward += self.obs_model.get_rule_reward(state, rnn_hidden)
 
                 # update action distribution using top-k samples
                 top_indexes = \

@@ -86,7 +86,7 @@ class RecurrentStateSpaceModel(nn.Module):
         Compute prior p(s_t+1 | h_t+1)
         """
         hidden = self.act(self.fc_state_action(torch.cat([state, action], dim=1)))
-        rnn_hidden = self.rnn(hidden, rnn_hidden)
+        rnn_hidden = self.rnn(hidden, rnn_hidden.clone())
         hidden = self.act(self.fc_rnn_hidden(rnn_hidden))
 
         mean = self.fc_state_mean_prior(hidden)
@@ -147,6 +147,31 @@ class ObservationModel(nn.Module):
         img = self.dc4(hidden)
         return vec, img
 
+    def get_rule_reward(self, state, rnn_hidden):
+        """
+        state and rnn is (N_candidates, size)
+        output is (N_candidates)
+        """
+        with torch.no_grad():
+            hidden = self.fc(torch.cat([state, rnn_hidden], dim=1))
+            hidden = hidden.view(hidden.size(0), 256, 1, 1)
+            hidden = F.relu(self.dc1(hidden))
+            hidden = F.relu(self.dc2(hidden))
+            hidden = F.relu(self.dc3(hidden))
+            img = self.dc4(hidden)
+            img = img.mean(axis=1)
+            img=torch.clip(img, 0.0, 1.0)
+
+            index = torch.arange(1, img.shape[-1] + 1, device=img.device)
+            column_sum = img.sum(dim=1)
+            img_sum = column_sum.sum(dim=1)
+            invalid_mask = img_sum < 10  # TODO
+            column_center = torch.sum(column_sum * index, dim=1) / index.sum()
+            dis_mid=torch.abs(column_center-32.5)
+            rule_reward=(-dis_mid+32.5)/325
+            rule_reward[invalid_mask] = 0
+        return rule_reward
+
     def reset(self):
         self.fc.reset_parameters()
         self.fc1.reset_parameters()
@@ -156,6 +181,7 @@ class ObservationModel(nn.Module):
         self.dc2.reset_parameters()
         self.dc3.reset_parameters()
         self.dc4.reset_parameters()
+
 
 class RewardModel(nn.Module):
     """
