@@ -19,7 +19,6 @@ from model import Encoder, RecurrentStateSpaceModel, ObservationModel, RewardMod
 from utils import ReplayBuffer
 from wrappers import GymWrapper, RepeatAction
 
-
 def main():
     parser = argparse.ArgumentParser(description='PlaNet for DM control')
     parser.add_argument('--seed', type=int, default=0)
@@ -123,6 +122,23 @@ def main():
 
             # compute state and rnn hidden sequences and kl loss
             kl_loss = 0
+            # next_state_priors=dict()
+            # # Latent overshooting
+            # for l in range(args.chunk_length - 1):
+            #     kl_loss_l=0
+            #     next_state_prior, next_state_posterior, rnn_hidden = \
+            #         rssm(states[l], actions[l], rnn_hiddens[l], embedded_observations[l + 1])
+            #     state=next_state_posterior.rsample()
+            #     states[l + 1] = state
+            #     rnn_hiddens[l + 1] = rnn_hidden
+            #     for t in range(l,args.chunk_length-1):
+            #         next_state_priors[(l+1,t+1)]=next_state_prior
+            #         next_state_prior, rnn_hidden=rssm.prior(next_state_prior.rsample(), actions[t+1], rnn_hidden)
+            #     for t in range(l+1): # calc s2,s3,s4...s_chunk length
+            #         kl = kl_divergence(next_state_priors[(t+1,l+1)], next_state_posterior).sum(dim=1)
+            #         kl_loss_l += kl.clamp(min=args.free_nats).mean()
+            #     kl_loss += kl_loss_l/(args.chunk_length-1)
+
             for l in range(args.chunk_length - 1):
                 next_state_prior, next_state_posterior, rnn_hidden = \
                     rssm(state, actions[l], rnn_hidden, embedded_observations[l + 1])
@@ -151,10 +167,10 @@ def main():
             # compute loss for observation and reward
             img_obs_loss = 0.5 * 0.1 * mse_loss(
                 img_recon_observations[1:], img_observations[1:], reduction='none').mean([0, 1]).sum()
-            vec_obs_loss = 0.5 * 10 * mse_loss(
+            vec_obs_loss = 0.5 * 1 * mse_loss(
                 vec_recon_observations[1:], vec_observations[1:], reduction='none').mean([0, 1]).sum()
             obs_loss = img_obs_loss + vec_obs_loss
-            reward_loss = 0.5 * 10 * mse_loss(predicted_rewards[1:], rewards[:-1])
+            reward_loss = 0.5 * 1 * mse_loss(predicted_rewards[1:], rewards[:-1])
 
             # add all losses and update model parameters with gradient descent
             loss = kl_loss + obs_loss + reward_loss
@@ -194,7 +210,7 @@ def main():
     for episode in range(args.seed_episodes, args.all_episodes):
         # collect experiences
         start = time.time()
-        cem_agent = CEMAgent(encoder, rssm, reward_model,
+        cem_agent = CEMAgent(encoder, rssm, reward_model, obs_model,
                              args.horizon, args.N_iterations,
                              args.N_candidates, args.N_top_candidates)
 
@@ -229,7 +245,7 @@ def main():
             start = time.time()
             total_reward = 0
             for i in range(5):
-                cem_agent = CEMAgent(encoder, rssm, reward_model,
+                cem_agent = CEMAgent(encoder, rssm, reward_model, obs_model,
                                      args.horizon, args.N_iterations,
                                      args.N_candidates, args.N_top_candidates)
                 obs = env.reset()
